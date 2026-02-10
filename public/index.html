@@ -1,671 +1,149 @@
-<!DOCTYPE html>
+<script>
+    const socket = io();
+    let myColor, currentRoom, currentTurn;
+    let score = { captured: 0, lost: 0 };
+    let selectedSquare = null;
 
-<html lang="pt-br">
+    function toggleRules(show) {
+        document.getElementById('modal-rules').style.display = show ? 'block' : 'none';
+        document.getElementById('overlay').style.display = show ? 'block' : 'none';
+    }
 
-<head>
+    function join() {
+        currentRoom = document.getElementById('roomInput').value.toUpperCase();
+        if(!currentRoom) return;
+        socket.emit('joinRoom', currentRoom);
+    }
 
-    <meta charset="UTF-8">
+    socket.on('playerAssign', (data) => {
+        myColor = data.color;
+        document.getElementById('lobby-screen').style.display = 'none';
+        document.getElementById('stats-container').style.display = 'flex';
+        document.getElementById('game-container').style.display = 'block';
+        createBoard();
+    });
 
-    <title>Damas Ultra-Modern 3D</title>
+    socket.on('startGame', (turn) => {
+        currentTurn = turn;
+        updateUI();
+    });
 
-    <script src="/socket.io/socket.io.js"></script>
-
-    <style>
-
-        :root {
-
-            --bg: #0f172a;
-
-            --panel: rgba(30, 41, 59, 0.7);
-
-            --red-3d: linear-gradient(145deg, #ff5f6d, #ffc371);
-
-            --black-3d: linear-gradient(145deg, #2c3e50, #000000);
-
-            --accent: #38bdf8;
-
+    function createBoard() {
+        const board = document.getElementById('board');
+        board.innerHTML = '';
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                const square = document.createElement('div');
+                square.className = `square ${(r+c)%2===0?'light':'dark'}`;
+                square.dataset.row = r; square.dataset.col = c;
+                if ((r+c)%2!==0) {
+                    if (r < 3) spawnPiece(square, 'black');
+                    if (r > 4) spawnPiece(square, 'red');
+                }
+                square.onclick = () => handleSquareClick(square);
+                board.appendChild(square);
+            }
         }
-
-
-
-        body {
-
-            background-color: var(--bg);
-
-            background-image: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
-
-            color: white;
-
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
-
-            display: flex;
-
-            flex-direction: column;
-
-            align-items: center;
-
-            justify-content: center;
-
-            min-height: 100vh;
-
-            margin: 0;
-
-        }
-
-
-
-        /* PAINEL DE PLACAR */
-
-        #stats-container {
-
-            display: flex;
-
-            gap: 20px;
-
-            margin-bottom: 20px;
-
-            width: 100%;
-
-            justify-content: center;
-
-        }
-
-
-
-        .stat-card {
-
-            background: var(--panel);
-
-            backdrop-filter: blur(10px);
-
-            padding: 15px 25px;
-
-            border-radius: 16px;
-
-            border: 1px solid rgba(255,255,255,0.1);
-
-            text-align: center;
-
-            min-width: 120px;
-
-        }
-
-
-
-        .stat-value { font-size: 24px; font-weight: 800; color: var(--accent); }
-
-        .stat-label { font-size: 12px; text-transform: uppercase; opacity: 0.7; }
-
-
-
-        /* TABULEIRO PREMIUM */
-
-        #game-container {
-
-            position: relative;
-
-            padding: 20px;
-
-            background: #1e293b;
-
-            border-radius: 20px;
-
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-
-        }
-
-
-
-        .board {
-
-            display: grid;
-
-            grid-template-columns: repeat(8, 70px);
-
-            grid-template-rows: repeat(8, 70px);
-
-            border-radius: 8px;
-
-            overflow: hidden;
-
-            border: 4px solid #0f172a;
-
-        }
-
-
-
-        .square { width: 70px; height: 70px; display: flex; align-items: center; justify-content: center; position: relative; }
-
-        .light { background: #cbd5e1; }
-
-        .dark { background: #334155; }
-
-
-
-        /* PEÇAS 3D MINIMALISTAS */
-
-        .piece {
-
-            width: 54px;
-
-            height: 54px;
-
-            border-radius: 50%;
-
-            cursor: pointer;
-
-            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-
-            position: relative;
-
-            z-index: 2;
-
-        }
-
-
-
-        .red {
-
-            background: var(--red-3d);
-
-            box-shadow: 0 6px 0 #991b1b, 0 12px 20px rgba(0,0,0,0.4);
-
-        }
-
-
-
-        .black {
-
-            background: var(--black-3d);
-
-            box-shadow: 0 6px 0 #000, 0 12px 20px rgba(0,0,0,0.5);
-
-        }
-
-
-
-        .piece::after { /* Detalhe interno da peça */
-
-            content: '';
-
-            position: absolute;
-
-            top: 10%; left: 10%; width: 80%; height: 80%;
-
-            border-radius: 50%;
-
-            border: 2px solid rgba(255,255,255,0.1);
-
-        }
-
-
-
-        .selected {
-
-            transform: translateY(-10px) scale(1.1);
-
-            filter: brightness(1.2);
-
-            box-shadow: 0 15px 30px rgba(56, 189, 248, 0.5);
-
-            border: 3px solid var(--accent);
-
-        }
-
-
-
-        /* BOTÃO DE REGRAS E MODAL */
-
-        #rules-btn {
-
-            position: fixed;
-
-            bottom: 20px;
-
-            right: 20px;
-
-            background: var(--accent);
-
-            color: #000;
-
-            border: none;
-
-            padding: 12px 24px;
-
-            border-radius: 50px;
-
-            font-weight: bold;
-
-            cursor: pointer;
-
-            box-shadow: 0 10px 15px -3px rgba(56, 189, 248, 0.4);
-
-        }
-
-
-
-        #modal-rules {
-
-            display: none;
-
-            position: fixed;
-
-            top: 50%; left: 50%;
-
-            transform: translate(-50%, -50%);
-
-            background: #1e293b;
-
-            padding: 40px;
-
-            border-radius: 24px;
-
-            z-index: 100;
-
-            max-width: 400px;
-
-            border: 1px solid var(--accent);
-
-        }
-
-
-
-        #overlay {
-
-            display: none;
-
-            position: fixed;
-
-            top: 0; left: 0; width: 100%; height: 100%;
-
-            background: rgba(0,0,0,0.8);
-
-            z-index: 99;
-
-        }
-
-
-
-        .close-btn { color: var(--accent); cursor: pointer; float: right; }
-
-
-
-        /* LOBBY */
-
-        #lobby-screen {
-
-            position: fixed;
-
-            inset: 0;
-
-            background: var(--bg);
-
-            z-index: 200;
-
-            display: flex;
-
-            flex-direction: column;
-
-            justify-content: center;
-
-            align-items: center;
-
-        }
-
-
-
-        input {
-
-            background: #1e293b;
-
-            border: 1px solid var(--accent);
-
-            color: white;
-
-            padding: 15px;
-
-            border-radius: 12px;
-
-            width: 250px;
-
-            margin-bottom: 20px;
-
-            font-size: 18px;
-
-            text-align: center;
-
-        }
-
-
-
-        .btn-primary {
-
-            background: var(--accent);
-
-            color: #0f172a;
-
-            border: none;
-
-            padding: 15px 40px;
-
-            border-radius: 12px;
-
-            font-weight: 800;
-
-            cursor: pointer;
-
-            transition: 0.3s;
-
-        }
-
-
-
-        .btn-primary:hover { transform: scale(1.05); }
-
-
-
-    </style>
-
-</head>
-
-<body>
-
-
-
-    <div id="lobby-screen">
-
-        <h1 style="font-size: 3rem; margin-bottom: 10px;">DAMAS <span style="color: var(--accent)">PRO</span></h1>
-
-        <p style="opacity: 0.6; margin-bottom: 30px;">Experiência Multiplayer 3D</p>
-
-        <input type="text" id="roomInput" placeholder="Código da Sala">
-
-        <button class="btn-primary" onclick="join()">INICIAR PARTIDA</button>
-
-    </div>
-
-
-
-    <div id="stats-container" style="display: none;">
-
-        <div class="stat-card">
-
-            <div id="score-captured" class="stat-value">0</div>
-
-            <div class="stat-label">Comidas</div>
-
-        </div>
-
-        <div class="stat-card">
-
-            <div id="score-lost" class="stat-value">0</div>
-
-            <div class="stat-label">Perdidas</div>
-
-        </div>
-
-        <div class="stat-card">
-
-            <div id="current-turn-text" class="stat-value" style="font-size: 16px;">...</div>
-
-            <div class="stat-label">Turno</div>
-
-        </div>
-
-    </div>
-
-
-
-    <div id="game-container" style="display: none;">
-
-        <div id="board" class="board"></div>
-
-    </div>
-
-
-
-    <button id="rules-btn" onclick="toggleRules(true)">REGRAS</button>
-
-
-
-    <div id="overlay" onclick="toggleRules(false)"></div>
-
-    <div id="modal-rules">
-
-        <span class="close-btn" onclick="toggleRules(false)">FECHAR [X]</span>
-
-        <h2>Regras do Jogo</h2>
-
-        <ul>
-
-            <li>As peças movem-se apenas para frente, uma casa por vez, nas diagonais escuras.</li>
-
-            <li><strong>Captura:</strong> Salte sobre a peça do oponente para "comê-la".</li>
-
-            <li><strong>Dama:</strong> Ao chegar no fim, a peça vira Dama e move-se livremente.</li>
-
-            <li>O turno muda após cada movimento ou captura.</li>
-
-        </ul>
-
-    </div>
-
-
-
-    <script>
-
-        const socket = io();
-
-        let myColor, currentRoom, currentTurn;
-
-        let score = { captured: 0, lost: 0 };
-
-        let selectedSquare = null;
-
-
-
-        function toggleRules(show) {
-
-            document.getElementById('modal-rules').style.display = show ? 'block' : 'none';
-
-            document.getElementById('overlay').style.display = show ? 'block' : 'none';
-
-        }
-
-
-
-        function join() {
-
-            currentRoom = document.getElementById('roomInput').value;
-
-            if(!currentRoom) return;
-
-            socket.emit('joinRoom', currentRoom);
-
-        }
-
-
-
-        socket.on('playerAssign', (data) => {
-
-            myColor = data.color;
-
-            document.getElementById('lobby-screen').style.display = 'none';
-
-            document.getElementById('stats-container').style.display = 'flex';
-
-            document.getElementById('game-container').style.display = 'block';
-
-            createBoard();
-
-        });
-
-
-
-        socket.on('startGame', (turn) => {
-
-            currentTurn = turn;
-
-            updateUI();
-
-        });
-
-
-
-        function createBoard() {
-
-            const board = document.getElementById('board');
-
-            board.innerHTML = '';
-
-            for (let r = 0; r < 8; r++) {
-
-                for (let c = 0; c < 8; c++) {
-
-                    const square = document.createElement('div');
-
-                    square.className = `square ${(r+c)%2===0?'light':'dark'}`;
-
-                    square.dataset.row = r; square.dataset.col = c;
-
-                    if ((r+c)%2!==0) {
-
-                        if (r < 3) spawnPiece(square, 'black');
-
-                        if (r > 4) spawnPiece(square, 'red');
-
+    }
+
+    function spawnPiece(parent, color) {
+        const p = document.createElement('div');
+        p.className = `piece ${color}`;
+        p.dataset.type = 'normal'; // Peça normal ou dama
+        parent.appendChild(p);
+    }
+
+    function handleSquareClick(square) {
+        if (currentTurn !== myColor) return;
+        const piece = square.querySelector('.piece');
+
+        if (piece && piece.classList.contains(myColor)) {
+            if(selectedSquare) selectedSquare.querySelector('.piece').classList.remove('selected');
+            selectedSquare = square;
+            piece.classList.add('selected');
+        } else if (selectedSquare && !piece) {
+            const fromR = parseInt(selectedSquare.dataset.row);
+            const fromC = parseInt(selectedSquare.dataset.col);
+            const toR = parseInt(square.dataset.row);
+            const toC = parseInt(square.dataset.col);
+            const movingPiece = selectedSquare.querySelector('.piece');
+            const isKing = movingPiece.dataset.type === 'king';
+
+            // Lógica de Movimento e Validação
+            const distR = toR - fromR;
+            const distC = Math.abs(toC - fromC);
+
+            // 1. Movimento Diagonal Simples
+            let isValid = false;
+            let isCapture = false;
+
+            if (isKing) {
+                // Dama: Move qualquer distância na diagonal se o caminho estiver livre
+                if (Math.abs(distR) === distC) isValid = true; 
+            } else {
+                // Normal: Apenas diagonal frente (Red sobe -, Black desce +)
+                const direction = myColor === 'red' ? -1 : 1;
+                if (distR === direction && distC === 1) isValid = true;
+                
+                // Normal: Captura (Pula 2 casas)
+                if (Math.abs(distR) === 2 && distC === 2) {
+                    const midR = (fromR + toR) / 2;
+                    const midC = (fromC + toC) / 2;
+                    const midSquare = document.querySelector(`[data-row="${midR}"][data-col="${midC}"]`);
+                    const midPiece = midSquare.querySelector('.piece');
+                    if (midPiece && !midPiece.classList.contains(myColor)) {
+                        isValid = true;
+                        isCapture = true;
                     }
-
-                    square.onclick = () => handleSquareClick(square);
-
-                    board.appendChild(square);
-
                 }
-
             }
 
-        }
-
-
-
-        function spawnPiece(parent, color) {
-
-            const p = document.createElement('div');
-
-            p.className = `piece ${color}`;
-
-            parent.appendChild(p);
-
-        }
-
-
-
-        function handleSquareClick(square) {
-
-            if (currentTurn !== myColor) return;
-
-            const piece = square.querySelector('.piece');
-
-
-
-            if (piece && piece.classList.contains(myColor)) {
-
-                if(selectedSquare) selectedSquare.querySelector('.piece').classList.remove('selected');
-
-                selectedSquare = square;
-
-                piece.classList.add('selected');
-
-            } else if (selectedSquare && !piece) {
-
+            if (isValid) {
                 socket.emit('movePiece', {
-
                     room: currentRoom,
-
                     color: myColor,
-
-                    from: { r: selectedSquare.dataset.row, c: selectedSquare.dataset.col },
-
-                    to: { r: square.dataset.row, c: square.dataset.col }
-
+                    from: { r: fromR, c: fromC },
+                    to: { r: toR, c: toC },
+                    isCapture: isCapture,
+                    becameKing: (myColor === 'red' && toR === 0) || (myColor === 'black' && toR === 7)
                 });
-
-                selectedSquare.querySelector('.piece').classList.remove('selected');
-
+                movingPiece.classList.remove('selected');
                 selectedSquare = null;
-
             }
+        }
+    }
 
+    socket.on('moveUpdate', (data) => {
+        const from = document.querySelector(`[data-row="${data.from.r}"][data-col="${data.from.c}"]`);
+        const to = document.querySelector(`[data-row="${data.to.r}"][data-col="${data.to.c}"]`);
+        const piece = from.querySelector('.piece');
+
+        if (data.isCapture) {
+            const midR = (parseInt(data.from.r) + parseInt(data.to.r)) / 2;
+            const midC = (parseInt(data.from.c) + parseInt(data.to.c)) / 2;
+            document.querySelector(`[data-row="${midR}"][data-col="${midC}"]`).innerHTML = '';
+            data.color === myColor ? score.captured++ : score.lost++;
         }
 
-
-
-        socket.on('moveUpdate', (data) => {
-
-            const from = document.querySelector(`[data-row="${data.from.r}"][data-col="${data.from.c}"]`);
-
-            const to = document.querySelector(`[data-row="${data.to.r}"][data-col="${data.to.c}"]`);
-
-            const piece = from.querySelector('.piece');
-
-           
-
-            // Lógica de Captura e Placar
-
-            if (Math.abs(data.from.r - data.to.r) === 2) {
-
-                const midR = (parseInt(data.from.r) + parseInt(data.to.r)) / 2;
-
-                const midC = (parseInt(data.from.c) + parseInt(data.to.c)) / 2;
-
-                const midSquare = document.querySelector(`[data-row="${midR}"][data-col="${midC}"]`);
-
-                midSquare.innerHTML = '';
-
-               
-
-                // Atualiza placar local
-
-                if(data.color === myColor) {
-
-                    score.captured++;
-
-                } else {
-
-                    score.lost++;
-
-                }
-
-            }
-
-
-
-            if(piece) to.appendChild(piece);
-
-            currentTurn = data.nextTurn;
-
-            updateUI();
-
-        });
-
-
-
-        function updateUI() {
-
-            document.getElementById('score-captured').innerText = score.captured;
-
-            document.getElementById('score-lost').innerText = score.lost;
-
-            const turnText = document.getElementById('current-turn-text');
-
-            turnText.innerText = currentTurn === myColor ? "SUA VEZ" : "OPONENTE";
-
-            turnText.style.color = currentTurn === myColor ? "#38bdf8" : "#f87171";
-
+        if (data.becameKing) {
+            piece.dataset.type = 'king';
+            piece.style.border = "4px solid gold"; // Visual da Dama
+            piece.innerHTML = "👑"; // Ícone de Dama
+            piece.style.display = "flex";
+            piece.style.alignItems = "center";
+            piece.style.justifyContent = "center";
         }
 
-    </script>
+        if(piece) to.appendChild(piece);
+        currentTurn = data.nextTurn;
+        updateUI();
+    });
 
-</body>
-
-</html>
+    function updateUI() {
+        document.getElementById('score-captured').innerText = score.captured;
+        document.getElementById('score-lost').innerText = score.lost;
+        const turnText = document.getElementById('current-turn-text');
+        turnText.innerText = currentTurn === myColor ? "SUA VEZ" : "OPONENTE";
+        turnText.style.color = currentTurn === myColor ? "#38bdf8" : "#f87171";
+    }
+</script>
