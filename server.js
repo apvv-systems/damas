@@ -76,21 +76,21 @@ function getFlyingKingCaptures(board, r, c) {
     let rr = r + dr;
     let cc = c + dc;
 
-    // varre até encontrar algo
+    // varre vazios até encontrar algo
     while (inBounds(rr, cc) && !board[rr][cc]) {
       rr += dr;
       cc += dc;
     }
 
-    // se saiu do tabuleiro ou achou peça amiga, sem captura nessa direção
+    // se saiu do tabuleiro ou achou amiga, sem captura
     if (!inBounds(rr, cc)) continue;
     if (board[rr][cc] && board[rr][cc].color === piece.color) continue;
 
-    // achou inimigo em (rr,cc)
+    // achou inimigo
     const capR = rr;
     const capC = cc;
 
-    // agora precisa de pelo menos uma casa vazia depois do inimigo
+    // agora as casas de pouso precisam ser vazias depois do inimigo
     rr += dr;
     cc += dc;
 
@@ -132,7 +132,6 @@ function hasCaptureFrom(board, r, c) {
 }
 
 function validateAndApplyMove(room, color, from, to) {
-  // room.board é a fonte da verdade
   const board = room.board;
 
   const fromR = parseInt(from.r, 10);
@@ -160,9 +159,8 @@ function validateAndApplyMove(room, color, from, to) {
   const dr = toR - fromR;
   const dc = toC - fromC;
 
-  // ====== DAMA VOADORA: MOVIMENTO + CAPTURA ======
+  // ====== DAMA VOADORA: MOVIMENTO LONGO + CAPTURA LONGA ======
   if (piece.king) {
-    // precisa ser diagonal
     if (Math.abs(dr) !== Math.abs(dc) || dr === 0) {
       return { ok: false, error: 'Dama só anda na diagonal.' };
     }
@@ -175,7 +173,7 @@ function validateAndApplyMove(room, color, from, to) {
 
     let enemySeen = null;
 
-    // varre as casas ENTRE origem e destino (destino não incluso)
+    // varre ENTRE origem e destino
     while (r !== toR && c !== toC) {
       const cell = board[r][c];
 
@@ -183,9 +181,7 @@ function validateAndApplyMove(room, color, from, to) {
         if (cell.color === piece.color) {
           return { ok: false, error: 'Caminho bloqueado.' };
         }
-        // inimigo
         if (enemySeen) {
-          // dois inimigos no mesmo caminho: inválido (uma jogada só captura uma peça)
           return { ok: false, error: 'Captura inválida.' };
         }
         enemySeen = { r, c };
@@ -200,38 +196,24 @@ function validateAndApplyMove(room, color, from, to) {
       return { ok: false, error: 'Você deve continuar capturando (combo).' };
     }
 
-    // Movimento simples: permitido apenas se não houver inimigo no caminho
-    // e também não estamos numa sequência forçada
+    // Movimento simples (sem captura)
     if (!enemySeen) {
-      if (room.mustContinue) {
-        return { ok: false, error: 'Você deve continuar capturando (combo).' };
-      }
-
-      // aplica movimento longo
       board[fromR][fromC] = null;
       board[toR][toC] = piece;
 
-      // dama não precisa promover
       room.mustContinue = false;
       room.continueFrom = null;
 
       return { ok: true, captured: null, promoted: false, fromR, fromC, toR, toC };
     }
 
-    // Captura longa: destino precisa estar depois do inimigo e o caminho até ele
-    // (após o inimigo) deve ser vazio — já garantido porque se tivesse peça amiga/inimiga adicional,
-    // enemySeen duplicaria ou caminho bloquearia.
-    // Só falta garantir que o inimigo NÃO é o destino (não é, porque destino é vazio) e que
-    // existe pelo menos uma casa vazia depois (o próprio destino já é vazia e fica depois).
-
-    // aplica captura
+    // Captura longa
     board[fromR][fromC] = null;
     board[enemySeen.r][enemySeen.c] = null;
     board[toR][toC] = piece;
 
     const captured = { r: enemySeen.r, c: enemySeen.c };
 
-    // multi-captura da dama
     const canContinue = hasCaptureFrom(board, toR, toC);
     room.mustContinue = canContinue;
     room.continueFrom = canContinue ? { r: toR, c: toC } : null;
@@ -240,18 +222,15 @@ function validateAndApplyMove(room, color, from, to) {
   }
 
   // ====== PEÇA COMUM (curta) ======
-  // Jogada simples: 1 diagonal
   const isSimple = Math.abs(dr) === 1 && Math.abs(dc) === 1;
-  // Captura: 2 diagonal
   const isCapture = Math.abs(dr) === 2 && Math.abs(dc) === 2;
 
-  // Regras de direção (peça comum não pode andar/capturar pra trás)
+  // direção: peça comum não pode andar/capturar pra trás
   if (!piece.king) {
     if (piece.color === 'red' && dr >= 0) return { ok: false, error: 'Peça vermelha não pode andar para trás.' };
     if (piece.color === 'black' && dr <= 0) return { ok: false, error: 'Peça preta não pode andar para trás.' };
   }
 
-  // Se está em mustContinue, só pode captura (não pode jogada simples)
   if (room.mustContinue && !isCapture) {
     return { ok: false, error: 'Você deve continuar capturando (combo).' };
   }
@@ -259,18 +238,15 @@ function validateAndApplyMove(room, color, from, to) {
   let captured = null;
 
   if (isSimple) {
-    // aplica
     board[fromR][fromC] = null;
     board[toR][toC] = piece;
 
-    // promoção
     let promoted = false;
     if (shouldPromote(piece, toR)) {
       piece.king = true;
       promoted = true;
     }
 
-    // após jogada simples: nunca continua
     room.mustContinue = false;
     room.continueFrom = null;
 
@@ -286,21 +262,18 @@ function validateAndApplyMove(room, color, from, to) {
       return { ok: false, error: 'Captura inválida.' };
     }
 
-    // aplica captura
     board[fromR][fromC] = null;
     board[midR][midC] = null;
     board[toR][toC] = piece;
 
     captured = { r: midR, c: midC };
 
-    // promoção
     let promoted = false;
     if (shouldPromote(piece, toR)) {
       piece.king = true;
       promoted = true;
     }
 
-    // multi-captura: se ainda dá pra capturar com essa peça, continua
     const canContinue = hasCaptureFrom(board, toR, toC);
     room.mustContinue = canContinue;
     room.continueFrom = canContinue ? { r: toR, c: toC } : null;
@@ -322,7 +295,7 @@ for (const code of ROOM_CODES) {
   };
 }
 
-// Mostra no console os códigos reais das 25 salas (pra você distribuir às duplas)
+// mostra os códigos no Render Logs
 console.log('🎟️ Salas disponíveis:');
 ROOM_CODES.forEach(c => console.log(' -', c));
 
@@ -330,7 +303,6 @@ io.on('connection', (socket) => {
   socket.on('joinRoom', (roomID) => {
     const raw = String(roomID || '').trim().toUpperCase();
 
-    // só aceita as 25 salas existentes
     if (!rooms[raw]) {
       socket.emit('errorMsg', 'Código inválido. Use um código válido (ex: SALA-01-XXXX).');
       return;
@@ -338,7 +310,6 @@ io.on('connection', (socket) => {
 
     socket.join(raw);
 
-    // se jogador já está na lista, não duplica (segurança)
     rooms[raw].players = rooms[raw].players.filter(p => p.id !== socket.id);
 
     if (rooms[raw].players.length < 2) {
@@ -347,7 +318,7 @@ io.on('connection', (socket) => {
       socket.emit('playerAssign', { color, roomID: raw });
 
       if (rooms[raw].players.length === 2) {
-        rooms[raw].turn = 'red'; // Vermelho começa
+        rooms[raw].turn = 'red';
         rooms[raw].mustContinue = false;
         rooms[raw].continueFrom = null;
 
@@ -359,7 +330,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('movePiece', (data) => {
-    // segurança básica
     const roomCode = String(data?.room || '').trim().toUpperCase();
     const color = data?.color;
 
@@ -367,24 +337,20 @@ io.on('connection', (socket) => {
 
     const room = rooms[roomCode];
 
-    // turno do servidor manda
     if (room.turn !== color) {
       socket.emit('errorMsg', 'Não é seu turno.');
       return;
     }
 
-    // valida e aplica regras de damas
     const result = validateAndApplyMove(room, color, data.from, data.to);
     if (!result.ok) {
       socket.emit('errorMsg', result.error || 'Movimento inválido.');
       return;
     }
 
-    // se NÃO está em multi-captura, troca turno
     if (!room.mustContinue) {
       room.turn = color === 'red' ? 'black' : 'red';
     } else {
-      // continua o mesmo jogador (combo)
       room.turn = color;
     }
 
@@ -393,20 +359,17 @@ io.on('connection', (socket) => {
       color,
       from: { r: result.fromR, c: result.fromC },
       to: { r: result.toR, c: result.toC },
-      captured: result.captured,        // {r,c} ou null
-      promoted: result.promoted,        // true/false (promoção da peça comum)
-      mustContinue: room.mustContinue,  // true/false
-      continueFrom: room.continueFrom,  // {r,c} ou null
+      captured: result.captured,
+      promoted: result.promoted,
+      mustContinue: room.mustContinue,
+      continueFrom: room.continueFrom,
       nextTurn: room.turn
     });
   });
 
   socket.on('disconnect', () => {
-    // Limpeza de sala simplificada (mantém sua estrutura)
     for (let r in rooms) {
       rooms[r].players = rooms[r].players.filter(p => p.id !== socket.id);
-      // opcional: se sala ficar vazia, pode resetar board (NÃO fiz pra não mudar comportamento sem você pedir)
-      // if (rooms[r].players.length === 0) rooms[r].board = createInitialBoard();
     }
   });
 });

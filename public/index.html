@@ -212,6 +212,21 @@
 
         }
 
+        /* ====== COROA DA DAMA (RAINHA) ====== */
+        .piece.king::before {
+            content: "♛";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -56%);
+            font-size: 26px;
+            font-weight: 900;
+            color: rgba(255,255,255,0.95);
+            text-shadow: 0 2px 6px rgba(0,0,0,0.6);
+            pointer-events: none;
+            z-index: 3;
+        }
+
 
 
         /* BOTÃO DE REGRAS E MODAL */
@@ -518,7 +533,7 @@
   function spawnPiece(parent, color, king) {
     const p = document.createElement('div');
     p.className = `piece ${color}`;
-    if (king) p.classList.add('king'); // visual opcional (sem CSS extra, não muda aparência)
+    if (king) p.classList.add('king');
     parent.appendChild(p);
   }
 
@@ -527,14 +542,17 @@
 
     const piece = square.querySelector('.piece');
 
-    // Se o servidor mandou continuar capturando, só pode clicar na peça correta
+    // ✅ CORREÇÃO DO TRAVAMENTO:
+    // Em multi-captura, você só pode SELECIONAR a peça de continueFrom,
+    // mas pode clicar em casas vazias (destinos) para completar a captura.
     if (mustContinue && continueFrom) {
       const r = parseInt(square.dataset.row, 10);
       const c = parseInt(square.dataset.col, 10);
       const isContinueSquare = (r === continueFrom.r && c === continueFrom.c);
 
-      // só permite selecionar a peça de continuação
-      if (!isContinueSquare) return;
+      if (piece && piece.classList.contains(myColor) && !isContinueSquare) {
+        return; // bloqueia tentar selecionar outra peça durante o combo
+      }
     }
 
     if (piece && piece.classList.contains(myColor)) {
@@ -579,7 +597,7 @@
 
       // Promoção: servidor manda promoted
       if (data.promoted) {
-        piece.classList.add('king'); // sem CSS extra, não muda aparência se você não quiser
+        piece.classList.add('king'); // agora mostra coroa via CSS
       }
     }
 
@@ -622,3 +640,7 @@
     turnText.style.color = currentTurn === myColor ? "#38bdf8" : "#f87171";
   }
 </script>
+
+</body>
+
+</html>
