@@ -9,8 +9,19 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ====== 25 SALAS FIXAS ======
-const ROOM_CODES = Array.from({ length: 25 }, (_, i) => `SALA-${String(i + 1).padStart(2, '0')}`);
+// ====== 25 SALAS: ORDEM + ALEATORIEDADE ======
+function randCode(len = 4) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // evita 0/O e 1/I
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
+const ROOM_CODES = Array.from({ length: 25 }, (_, i) => {
+  const n = String(i + 1).padStart(2, '0');
+  return `SALA-${n}-${randCode(4)}`; // ex: SALA-01-K7Q4
+});
+
 const rooms = {}; // mantém o mesmo nome que você já usa
 
 function createInitialBoard() {
@@ -33,6 +44,7 @@ function inBounds(r, c) {
 }
 
 function getDirs(piece) {
+  // dama pode ir em qualquer diagonal
   if (piece.king) {
     return [
       [-1, -1], [-1, 1],
@@ -52,10 +64,56 @@ function shouldPromote(piece, toR) {
   );
 }
 
+// ====== DAMA VOADORA: CAPTURAS LONGAS ======
+function getFlyingKingCaptures(board, r, c) {
+  const piece = board[r][c];
+  if (!piece || !piece.king) return [];
+
+  const dirs = getDirs(piece);
+  const moves = [];
+
+  for (const [dr, dc] of dirs) {
+    let rr = r + dr;
+    let cc = c + dc;
+
+    // varre até encontrar algo
+    while (inBounds(rr, cc) && !board[rr][cc]) {
+      rr += dr;
+      cc += dc;
+    }
+
+    // se saiu do tabuleiro ou achou peça amiga, sem captura nessa direção
+    if (!inBounds(rr, cc)) continue;
+    if (board[rr][cc] && board[rr][cc].color === piece.color) continue;
+
+    // achou inimigo em (rr,cc)
+    const capR = rr;
+    const capC = cc;
+
+    // agora precisa de pelo menos uma casa vazia depois do inimigo
+    rr += dr;
+    cc += dc;
+
+    while (inBounds(rr, cc) && !board[rr][cc]) {
+      moves.push({ toR: rr, toC: cc, capR, capC });
+      rr += dr;
+      cc += dc;
+    }
+  }
+
+  return moves;
+}
+
 function hasCaptureFrom(board, r, c) {
   const piece = board[r][c];
   if (!piece) return false;
 
+  // dama voadora
+  if (piece.king) {
+    return getFlyingKingCaptures(board, r, c).length > 0;
+  }
+
+  // peça comum (curta)
   const dirs = getDirs(piece);
   for (const [dr, dc] of dirs) {
     const midR = r + dr;
@@ -102,6 +160,86 @@ function validateAndApplyMove(room, color, from, to) {
   const dr = toR - fromR;
   const dc = toC - fromC;
 
+  // ====== DAMA VOADORA: MOVIMENTO + CAPTURA ======
+  if (piece.king) {
+    // precisa ser diagonal
+    if (Math.abs(dr) !== Math.abs(dc) || dr === 0) {
+      return { ok: false, error: 'Dama só anda na diagonal.' };
+    }
+
+    const stepR = dr > 0 ? 1 : -1;
+    const stepC = dc > 0 ? 1 : -1;
+
+    let r = fromR + stepR;
+    let c = fromC + stepC;
+
+    let enemySeen = null;
+
+    // varre as casas ENTRE origem e destino (destino não incluso)
+    while (r !== toR && c !== toC) {
+      const cell = board[r][c];
+
+      if (cell) {
+        if (cell.color === piece.color) {
+          return { ok: false, error: 'Caminho bloqueado.' };
+        }
+        // inimigo
+        if (enemySeen) {
+          // dois inimigos no mesmo caminho: inválido (uma jogada só captura uma peça)
+          return { ok: false, error: 'Captura inválida.' };
+        }
+        enemySeen = { r, c };
+      }
+
+      r += stepR;
+      c += stepC;
+    }
+
+    // Se está em mustContinue, dama só pode capturar
+    if (room.mustContinue && !enemySeen) {
+      return { ok: false, error: 'Você deve continuar capturando (combo).' };
+    }
+
+    // Movimento simples: permitido apenas se não houver inimigo no caminho
+    // e também não estamos numa sequência forçada
+    if (!enemySeen) {
+      if (room.mustContinue) {
+        return { ok: false, error: 'Você deve continuar capturando (combo).' };
+      }
+
+      // aplica movimento longo
+      board[fromR][fromC] = null;
+      board[toR][toC] = piece;
+
+      // dama não precisa promover
+      room.mustContinue = false;
+      room.continueFrom = null;
+
+      return { ok: true, captured: null, promoted: false, fromR, fromC, toR, toC };
+    }
+
+    // Captura longa: destino precisa estar depois do inimigo e o caminho até ele
+    // (após o inimigo) deve ser vazio — já garantido porque se tivesse peça amiga/inimiga adicional,
+    // enemySeen duplicaria ou caminho bloquearia.
+    // Só falta garantir que o inimigo NÃO é o destino (não é, porque destino é vazio) e que
+    // existe pelo menos uma casa vazia depois (o próprio destino já é vazia e fica depois).
+
+    // aplica captura
+    board[fromR][fromC] = null;
+    board[enemySeen.r][enemySeen.c] = null;
+    board[toR][toC] = piece;
+
+    const captured = { r: enemySeen.r, c: enemySeen.c };
+
+    // multi-captura da dama
+    const canContinue = hasCaptureFrom(board, toR, toC);
+    room.mustContinue = canContinue;
+    room.continueFrom = canContinue ? { r: toR, c: toC } : null;
+
+    return { ok: true, captured, promoted: false, fromR, fromC, toR, toC };
+  }
+
+  // ====== PEÇA COMUM (curta) ======
   // Jogada simples: 1 diagonal
   const isSimple = Math.abs(dr) === 1 && Math.abs(dc) === 1;
   // Captura: 2 diagonal
@@ -121,7 +259,6 @@ function validateAndApplyMove(room, color, from, to) {
   let captured = null;
 
   if (isSimple) {
-    // permitido: só movimento simples
     // aplica
     board[fromR][fromC] = null;
     board[toR][toC] = piece;
@@ -174,7 +311,7 @@ function validateAndApplyMove(room, color, from, to) {
   return { ok: false, error: 'Movimento inválido: só diagonal.' };
 }
 
-// Pré-cria as 25 salas (fixas)
+// Pré-cria as 25 salas (ordenadas + aleatórias)
 for (const code of ROOM_CODES) {
   rooms[code] = {
     players: [],
@@ -185,13 +322,17 @@ for (const code of ROOM_CODES) {
   };
 }
 
+// Mostra no console os códigos reais das 25 salas (pra você distribuir às duplas)
+console.log('🎟️ Salas disponíveis:');
+ROOM_CODES.forEach(c => console.log(' -', c));
+
 io.on('connection', (socket) => {
   socket.on('joinRoom', (roomID) => {
     const raw = String(roomID || '').trim().toUpperCase();
 
-    // só aceita as 25 salas
+    // só aceita as 25 salas existentes
     if (!rooms[raw]) {
-      socket.emit('errorMsg', 'Código inválido. Use SALA-01 até SALA-25.');
+      socket.emit('errorMsg', 'Código inválido. Use um código válido (ex: SALA-01-XXXX).');
       return;
     }
 
@@ -243,7 +384,7 @@ io.on('connection', (socket) => {
     if (!room.mustContinue) {
       room.turn = color === 'red' ? 'black' : 'red';
     } else {
-      // continua o mesmo jogador
+      // continua o mesmo jogador (combo)
       room.turn = color;
     }
 
@@ -253,7 +394,7 @@ io.on('connection', (socket) => {
       from: { r: result.fromR, c: result.fromC },
       to: { r: result.toR, c: result.toC },
       captured: result.captured,        // {r,c} ou null
-      promoted: result.promoted,        // true/false
+      promoted: result.promoted,        // true/false (promoção da peça comum)
       mustContinue: room.mustContinue,  // true/false
       continueFrom: room.continueFrom,  // {r,c} ou null
       nextTurn: room.turn
