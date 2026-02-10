@@ -453,219 +453,172 @@
 
 
     <script>
+  const socket = io();
+  let myColor, currentRoom, currentTurn;
+  let score = { captured: 0, lost: 0 };
+  let selectedSquare = null;
 
-        const socket = io();
+  // Para multi-captura: o servidor manda quando você precisa continuar com a mesma peça
+  let mustContinue = false;
+  let continueFrom = null; // {r,c}
 
-        let myColor, currentRoom, currentTurn;
+  function toggleRules(show) {
+    document.getElementById('modal-rules').style.display = show ? 'block' : 'none';
+    document.getElementById('overlay').style.display = show ? 'block' : 'none';
+  }
 
-        let score = { captured: 0, lost: 0 };
+  function join() {
+    currentRoom = document.getElementById('roomInput').value;
+    if (!currentRoom) return;
+    currentRoom = String(currentRoom).trim().toUpperCase(); // NÃO muda UX, só padroniza
+    socket.emit('joinRoom', currentRoom);
+  }
 
-        let selectedSquare = null;
+  // Mostra erros do servidor
+  socket.on('errorMsg', (msg) => {
+    alert(msg);
+  });
 
+  socket.on('playerAssign', (data) => {
+    myColor = data.color;
+    currentRoom = data.roomID || currentRoom;
 
+    document.getElementById('lobby-screen').style.display = 'none';
+    document.getElementById('stats-container').style.display = 'flex';
+    document.getElementById('game-container').style.display = 'block';
+    createBoard();
+  });
 
-        function toggleRules(show) {
+  socket.on('startGame', (turn) => {
+    currentTurn = turn;
+    mustContinue = false;
+    continueFrom = null;
+    updateUI();
+  });
 
-            document.getElementById('modal-rules').style.display = show ? 'block' : 'none';
+  function createBoard() {
+    const board = document.getElementById('board');
+    board.innerHTML = '';
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const square = document.createElement('div');
+        square.className = `square ${(r + c) % 2 === 0 ? 'light' : 'dark'}`;
+        square.dataset.row = r; square.dataset.col = c;
 
-            document.getElementById('overlay').style.display = show ? 'block' : 'none';
-
+        if ((r + c) % 2 !== 0) {
+          if (r < 3) spawnPiece(square, 'black', false);
+          if (r > 4) spawnPiece(square, 'red', false);
         }
+        square.onclick = () => handleSquareClick(square);
+        board.appendChild(square);
+      }
+    }
+  }
 
+  function spawnPiece(parent, color, king) {
+    const p = document.createElement('div');
+    p.className = `piece ${color}`;
+    if (king) p.classList.add('king'); // visual opcional (sem CSS extra, não muda aparência)
+    parent.appendChild(p);
+  }
 
+  function handleSquareClick(square) {
+    if (currentTurn !== myColor) return;
 
-        function join() {
+    const piece = square.querySelector('.piece');
 
-            currentRoom = document.getElementById('roomInput').value;
+    // Se o servidor mandou continuar capturando, só pode clicar na peça correta
+    if (mustContinue && continueFrom) {
+      const r = parseInt(square.dataset.row, 10);
+      const c = parseInt(square.dataset.col, 10);
+      const isContinueSquare = (r === continueFrom.r && c === continueFrom.c);
 
-            if(!currentRoom) return;
+      // só permite selecionar a peça de continuação
+      if (!isContinueSquare) return;
+    }
 
-            socket.emit('joinRoom', currentRoom);
+    if (piece && piece.classList.contains(myColor)) {
+      if (selectedSquare) {
+        const prev = selectedSquare.querySelector('.piece');
+        if (prev) prev.classList.remove('selected');
+      }
+      selectedSquare = square;
+      piece.classList.add('selected');
 
+    } else if (selectedSquare && !piece) {
+      socket.emit('movePiece', {
+        room: currentRoom,
+        color: myColor,
+        from: { r: selectedSquare.dataset.row, c: selectedSquare.dataset.col },
+        to: { r: square.dataset.row, c: square.dataset.col }
+      });
+
+      const selPiece = selectedSquare.querySelector('.piece');
+      if (selPiece) selPiece.classList.remove('selected');
+      selectedSquare = null;
+    }
+  }
+
+  socket.on('moveUpdate', (data) => {
+    const from = document.querySelector(`[data-row="${data.from.r}"][data-col="${data.from.c}"]`);
+    const to = document.querySelector(`[data-row="${data.to.r}"][data-col="${data.to.c}"]`);
+    const piece = from ? from.querySelector('.piece') : null;
+
+    // Captura vem do servidor (mais seguro e correto)
+    if (data.captured) {
+      const midSquare = document.querySelector(`[data-row="${data.captured.r}"][data-col="${data.captured.c}"]`);
+      if (midSquare) midSquare.innerHTML = '';
+
+      // Atualiza placar local
+      if (data.color === myColor) score.captured++;
+      else score.lost++;
+    }
+
+    if (piece && to) {
+      to.appendChild(piece);
+
+      // Promoção: servidor manda promoted
+      if (data.promoted) {
+        piece.classList.add('king'); // sem CSS extra, não muda aparência se você não quiser
+      }
+    }
+
+    // Controle de multi-captura
+    mustContinue = !!data.mustContinue;
+    continueFrom = data.continueFrom ? { r: data.continueFrom.r, c: data.continueFrom.c } : null;
+
+    currentTurn = data.nextTurn;
+    updateUI();
+
+    // Se é sua vez e precisa continuar, seleciona automaticamente a peça certa
+    if (currentTurn === myColor && mustContinue && continueFrom) {
+      const sq = document.querySelector(`[data-row="${continueFrom.r}"][data-col="${continueFrom.c}"]`);
+      if (sq) {
+        const p = sq.querySelector('.piece');
+        if (p) {
+          if (selectedSquare) {
+            const prev = selectedSquare.querySelector('.piece');
+            if (prev) prev.classList.remove('selected');
+          }
+          selectedSquare = sq;
+          p.classList.add('selected');
         }
-
-
-
-        socket.on('playerAssign', (data) => {
-
-            myColor = data.color;
-
-            document.getElementById('lobby-screen').style.display = 'none';
-
-            document.getElementById('stats-container').style.display = 'flex';
-
-            document.getElementById('game-container').style.display = 'block';
-
-            createBoard();
-
-        });
-
-
-
-        socket.on('startGame', (turn) => {
-
-            currentTurn = turn;
-
-            updateUI();
-
-        });
-
-
-
-        function createBoard() {
-
-            const board = document.getElementById('board');
-
-            board.innerHTML = '';
-
-            for (let r = 0; r < 8; r++) {
-
-                for (let c = 0; c < 8; c++) {
-
-                    const square = document.createElement('div');
-
-                    square.className = `square ${(r+c)%2===0?'light':'dark'}`;
-
-                    square.dataset.row = r; square.dataset.col = c;
-
-                    if ((r+c)%2!==0) {
-
-                        if (r < 3) spawnPiece(square, 'black');
-
-                        if (r > 4) spawnPiece(square, 'red');
-
-                    }
-
-                    square.onclick = () => handleSquareClick(square);
-
-                    board.appendChild(square);
-
-                }
-
-            }
-
-        }
-
-
-
-        function spawnPiece(parent, color) {
-
-            const p = document.createElement('div');
-
-            p.className = `piece ${color}`;
-
-            parent.appendChild(p);
-
-        }
-
-
-
-        function handleSquareClick(square) {
-
-            if (currentTurn !== myColor) return;
-
-            const piece = square.querySelector('.piece');
-
-
-
-            if (piece && piece.classList.contains(myColor)) {
-
-                if(selectedSquare) selectedSquare.querySelector('.piece').classList.remove('selected');
-
-                selectedSquare = square;
-
-                piece.classList.add('selected');
-
-            } else if (selectedSquare && !piece) {
-
-                socket.emit('movePiece', {
-
-                    room: currentRoom,
-
-                    color: myColor,
-
-                    from: { r: selectedSquare.dataset.row, c: selectedSquare.dataset.col },
-
-                    to: { r: square.dataset.row, c: square.dataset.col }
-
-                });
-
-                selectedSquare.querySelector('.piece').classList.remove('selected');
-
-                selectedSquare = null;
-
-            }
-
-        }
-
-
-
-        socket.on('moveUpdate', (data) => {
-
-            const from = document.querySelector(`[data-row="${data.from.r}"][data-col="${data.from.c}"]`);
-
-            const to = document.querySelector(`[data-row="${data.to.r}"][data-col="${data.to.c}"]`);
-
-            const piece = from.querySelector('.piece');
-
-           
-
-            // Lógica de Captura e Placar
-
-            if (Math.abs(data.from.r - data.to.r) === 2) {
-
-                const midR = (parseInt(data.from.r) + parseInt(data.to.r)) / 2;
-
-                const midC = (parseInt(data.from.c) + parseInt(data.to.c)) / 2;
-
-                const midSquare = document.querySelector(`[data-row="${midR}"][data-col="${midC}"]`);
-
-                midSquare.innerHTML = '';
-
-               
-
-                // Atualiza placar local
-
-                if(data.color === myColor) {
-
-                    score.captured++;
-
-                } else {
-
-                    score.lost++;
-
-                }
-
-            }
-
-
-
-            if(piece) to.appendChild(piece);
-
-            currentTurn = data.nextTurn;
-
-            updateUI();
-
-        });
-
-
-
-        function updateUI() {
-
-            document.getElementById('score-captured').innerText = score.captured;
-
-            document.getElementById('score-lost').innerText = score.lost;
-
-            const turnText = document.getElementById('current-turn-text');
-
-            turnText.innerText = currentTurn === myColor ? "SUA VEZ" : "OPONENTE";
-
-            turnText.style.color = currentTurn === myColor ? "#38bdf8" : "#f87171";
-
-        }
-
-    </script>
-
-</body>
-
-</html>
+      }
+    } else {
+      // limpa seleção se turno mudou
+      if (selectedSquare) {
+        const p = selectedSquare.querySelector('.piece');
+        if (p) p.classList.remove('selected');
+        selectedSquare = null;
+      }
+    }
+  });
+
+  function updateUI() {
+    document.getElementById('score-captured').innerText = score.captured;
+    document.getElementById('score-lost').innerText = score.lost;
+    const turnText = document.getElementById('current-turn-text');
+    turnText.innerText = currentTurn === myColor ? "SUA VEZ" : "OPONENTE";
+    turnText.style.color = currentTurn === myColor ? "#38bdf8" : "#f87171";
+  }
+</script>
